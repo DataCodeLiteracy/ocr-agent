@@ -1,6 +1,7 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
+import { useRouter } from "next/navigation"
 import {
   Camera,
   FileText,
@@ -9,13 +10,16 @@ import {
   Info,
   Copy,
   Check,
+  LogOut,
+  User,
 } from "lucide-react"
 import ImageUpload from "@/components/ImageUpload"
 import Button from "@/components/Button"
 import LoadingSpinner from "@/components/LoadingSpinner"
 import OCRResult from "@/components/OCRResult"
 import { OCRService, BatchOCRResult } from "@/lib/OCRService"
-import { OCRResponse } from "@/types"
+import { useAuth } from "@/hooks/useAuth"
+import { auth } from "@/lib/firebase"
 
 export default function Home() {
   const [selectedImages, setSelectedImages] = useState<File[]>([])
@@ -25,7 +29,16 @@ export default function Home() {
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null)
   const [allTextCopied, setAllTextCopied] = useState(false)
 
+  const { user, loading, logout } = useAuth()
+  const router = useRouter()
   const ocrService = new OCRService()
+
+  // 로그인 상태 체크 및 리다이렉션
+  useEffect(() => {
+    if (!loading && !user) {
+      router.push("/login")
+    }
+  }, [user, loading, router])
 
   const handleImageSelect = (files: File[]) => {
     setSelectedImages(files)
@@ -40,13 +53,17 @@ export default function Home() {
   }
 
   const handlePerformOCR = async () => {
-    if (selectedImages.length === 0) return
+    if (selectedImages.length === 0 || !user) return
 
     setIsProcessing(true)
     setError("")
 
     try {
-      const result = await ocrService.performBatchOCR(selectedImages)
+      // Firebase ID 토큰 가져오기
+      const token = await auth.currentUser?.getIdToken()
+      
+      const result = await ocrService.performBatchOCR(selectedImages, token)
+
       setBatchResult(result)
 
       if (!result.success) {
@@ -83,6 +100,41 @@ export default function Home() {
       .join("\n\n---\n\n")
   }
 
+  const handleLogout = async () => {
+    try {
+      console.log("로그아웃 시작...")
+      await logout()
+      console.log("로그아웃 완료, 상태 초기화...")
+      setSelectedImages([])
+      setBatchResult(null)
+      setError("")
+      // 즉시 리다이렉션
+      window.location.href = "/login"
+    } catch (error) {
+      console.error("로그아웃 오류:", error)
+    }
+  }
+
+  // 로딩 중이거나 로그인되지 않은 경우
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
+        <LoadingSpinner size="lg" text="로딩 중..." />
+      </div>
+    )
+  }
+
+  // 로그인되지 않은 경우 (리다이렉션 중)
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
+        <div className="text-center">
+          <LoadingSpinner size="lg" text="리다이렉션 중..." />
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className='min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100'>
       {/* Header */}
@@ -93,10 +145,37 @@ export default function Home() {
               <BookOpen className='h-8 w-8 text-blue-600' />
               <h1 className='text-2xl font-bold text-gray-900'>OCR 에이전트</h1>
             </div>
-            <div className='flex items-center space-x-4 text-sm text-gray-500'>
-              <div className='flex items-center space-x-1'>
+            <div className='flex items-center space-x-4'>
+              <div className='flex items-center space-x-2 text-sm text-gray-500'>
                 <Smartphone className='h-4 w-4' />
                 <span>모바일 친화적</span>
+              </div>
+              
+              <div className='flex items-center space-x-3'>
+                <div className='flex items-center space-x-2'>
+                  {user.photoURL ? (
+                    <img
+                      src={user.photoURL}
+                      alt={user.displayName}
+                      className='w-8 h-8 rounded-full'
+                    />
+                  ) : (
+                    <User className='h-8 w-8 text-gray-400' />
+                  )}
+                  <div className='text-sm'>
+                    <div className='font-medium text-gray-900'>{user.displayName}</div>
+                    <div className='text-gray-500'>{user.email}</div>
+                  </div>
+                </div>
+                <Button
+                  variant='outline'
+                  size='sm'
+                  onClick={handleLogout}
+                  className='flex items-center space-x-1'
+                >
+                  <LogOut size={16} />
+                  <span>로그아웃</span>
+                </Button>
               </div>
             </div>
           </div>
@@ -105,181 +184,204 @@ export default function Home() {
 
       {/* Main Content */}
       <main className='max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8'>
-        <div className='text-center mb-8'>
-          <h2 className='text-2xl sm:text-3xl font-bold text-gray-900 mb-4'>
-            책 페이지에서 텍스트 추출하기
-          </h2>
-          <p className='text-base sm:text-lg text-gray-600 max-w-2xl mx-auto'>
-            핸드폰으로 책 페이지를 촬영하거나 이미지를 업로드하여 고급 OCR
-            기술로 텍스트를 추출하세요.
-          </p>
-        </div>
-
-        {/* Features */}
-        <div className='grid grid-cols-1 md:grid-cols-3 gap-6 mb-8'>
-          <div className='bg-white rounded-lg p-6 shadow-sm'>
-            <div className='flex items-center justify-center w-12 h-12 bg-blue-100 rounded-lg mb-4'>
-              <Camera className='h-6 w-6 text-blue-600' />
+        {!user.is_premium ? (
+          <div className='text-center py-12'>
+            <div className='mx-auto flex items-center justify-center w-16 h-16 bg-yellow-100 rounded-full mb-4'>
+              <Info className='h-8 w-8 text-yellow-600' />
             </div>
-            <h3 className='text-lg font-semibold text-gray-900 mb-2'>
-              쉬운 촬영
-            </h3>
-            <p className='text-gray-600'>
-              핸드폰 카메라로 직접 촬영하거나 기존 이미지를 업로드하세요.
+            <h2 className='text-2xl font-bold text-gray-900 mb-4'>
+              승인 대기 중
+            </h2>
+            <p className='text-gray-600 mb-6'>
+              관리자 승인을 받으면 서비스를 이용할 수 있습니다.
+              <br />
+              승인 상태: <span className='font-medium text-yellow-600'>대기 중</span>
             </p>
-          </div>
-
-          <div className='bg-white rounded-lg p-6 shadow-sm'>
-            <div className='flex items-center justify-center w-12 h-12 bg-green-100 rounded-lg mb-4'>
-              <FileText className='h-6 w-6 text-green-600' />
-            </div>
-            <h3 className='text-lg font-semibold text-gray-900 mb-2'>
-              스마트 OCR
-            </h3>
-            <p className='text-gray-600'>
-              Google Vision API로 구동되는 고급 텍스트 인식 기술.
-            </p>
-          </div>
-
-          <div className='bg-white rounded-lg p-6 shadow-sm'>
-            <div className='flex items-center justify-center w-12 h-12 bg-purple-100 rounded-lg mb-4'>
-              <BookOpen className='h-6 w-6 text-purple-600' />
-            </div>
-            <h3 className='text-lg font-semibold text-gray-900 mb-2'>
-              책 최적화
-            </h3>
-            <p className='text-gray-600'>
-              책 페이지와 문서에 특화된 텍스트 추출 기능.
-            </p>
-          </div>
-        </div>
-
-        {/* API Info */}
-        <div className='bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6'>
-          <div className='flex items-start space-x-3'>
-            <Info className='h-5 w-5 text-blue-600 mt-0.5' />
-            <div className='text-sm text-blue-800'>
-              <p className='font-medium mb-1'>Google Vision API 사용 안내</p>
-              <ul className='space-y-1 text-xs'>
-                <li>• 월 1,000회 무료 OCR 처리</li>
-                <li>• 최대 파일 크기: 10MB</li>
-                <li>• 지원 형식: JPEG, PNG, GIF, BMP, WEBP</li>
-                <li>• 최대 해상도: 20MP (메가픽셀)</li>
-                <li>• 여러 이미지 동시 처리 가능</li>
-              </ul>
+            <div className='bg-yellow-50 border border-yellow-200 rounded-lg p-4 max-w-md mx-auto'>
+              <p className='text-sm text-yellow-800'>
+                관리자에게 승인을 요청하거나 잠시 후 다시 시도해주세요.
+              </p>
             </div>
           </div>
-        </div>
-
-        {/* Upload Section */}
-        <div className='bg-white rounded-lg shadow-sm p-6 mb-6'>
-          <h3 className='text-xl font-semibold text-gray-900 mb-4'>
-            이미지 업로드
-          </h3>
-
-          <ImageUpload
-            onImageSelect={handleImageSelect}
-            selectedImages={selectedImages}
-            onClearImages={handleClearImages}
-            maxSize={10}
-          />
-
-          {selectedImages.length > 0 && (
-            <div className='mt-6'>
-              <Button
-                onClick={handlePerformOCR}
-                loading={isProcessing}
-                disabled={isProcessing}
-                className='w-full'
-                size='lg'
-              >
-                {isProcessing
-                  ? "처리 중..."
-                  : `${selectedImages.length}개 이미지 텍스트 추출`}
-              </Button>
+        ) : (
+          <>
+            <div className='text-center mb-8'>
+              <h2 className='text-2xl sm:text-3xl font-bold text-gray-900 mb-4'>
+                책 페이지에서 텍스트 추출하기
+              </h2>
+              <p className='text-base sm:text-lg text-gray-600 max-w-2xl mx-auto'>
+                핸드폰으로 책 페이지를 촬영하거나 이미지를 업로드하여 고급 OCR
+                기술로 텍스트를 추출하세요.
+              </p>
             </div>
-          )}
 
-          {error && (
-            <div className='mt-4 p-4 bg-red-50 border border-red-200 rounded-lg'>
-              <p className='text-red-600'>{error}</p>
-            </div>
-          )}
-        </div>
-
-        {/* Processing State */}
-        {isProcessing && (
-          <div className='bg-white rounded-lg shadow-sm p-8 text-center'>
-            <LoadingSpinner
-              size='lg'
-              text='이미지에서 텍스트를 추출하고 있습니다...'
-            />
-          </div>
-        )}
-
-        {/* OCR Results */}
-        {batchResult && (
-          <div className='bg-white rounded-lg shadow-sm p-6'>
-            <div className='flex items-center justify-between mb-6'>
-              <h3 className='text-xl font-semibold text-gray-900'>
-                텍스트 추출 결과
-              </h3>
-              <div className='flex items-center space-x-4'>
-                <div className='text-sm text-gray-600'>
-                  성공:{" "}
-                  <span className='font-medium text-green-600'>
-                    {batchResult.totalSuccess}
-                  </span>{" "}
-                  / 실패:{" "}
-                  <span className='font-medium text-red-600'>
-                    {batchResult.totalFailed}
-                  </span>
+            {/* Features */}
+            <div className='grid grid-cols-1 md:grid-cols-3 gap-6 mb-8'>
+              <div className='bg-white rounded-lg p-6 shadow-sm'>
+                <div className='flex items-center justify-center w-12 h-12 bg-blue-100 rounded-lg mb-4'>
+                  <Camera className='h-6 w-6 text-blue-600' />
                 </div>
-                <Button
-                  variant='outline'
-                  size='sm'
-                  onClick={() => copyToClipboard(getAllText())}
-                  className='flex items-center space-x-2'
-                >
-                  {allTextCopied ? <Check size={16} /> : <Copy size={16} />}
-                  <span>{allTextCopied ? "복사됨" : "전체 복사"}</span>
-                </Button>
+                <h3 className='text-lg font-semibold text-gray-900 mb-2'>
+                  쉬운 촬영
+                </h3>
+                <p className='text-gray-600'>
+                  핸드폰 카메라로 직접 촬영하거나 기존 이미지를 업로드하세요.
+                </p>
+              </div>
+
+              <div className='bg-white rounded-lg p-6 shadow-sm'>
+                <div className='flex items-center justify-center w-12 h-12 bg-green-100 rounded-lg mb-4'>
+                  <FileText className='h-6 w-6 text-green-600' />
+                </div>
+                <h3 className='text-lg font-semibold text-gray-900 mb-2'>
+                  스마트 OCR
+                </h3>
+                <p className='text-gray-600'>
+                  Google Vision API로 구동되는 고급 텍스트 인식 기술.
+                </p>
+              </div>
+
+              <div className='bg-white rounded-lg p-6 shadow-sm'>
+                <div className='flex items-center justify-center w-12 h-12 bg-purple-100 rounded-lg mb-4'>
+                  <BookOpen className='h-6 w-6 text-purple-600' />
+                </div>
+                <h3 className='text-lg font-semibold text-gray-900 mb-2'>
+                  책 최적화
+                </h3>
+                <p className='text-gray-600'>
+                  책 페이지와 문서에 특화된 텍스트 추출 기능.
+                </p>
               </div>
             </div>
 
-            <div className='space-y-6 max-h-[72rem] overflow-y-auto'>
-              {batchResult.results.map((result, index) => (
-                <div
-                  key={index}
-                  className='border border-gray-200 rounded-lg p-4'
-                >
-                  <div className='flex items-center justify-between mb-3'>
-                    <h4 className='font-medium text-gray-900'>
-                      이미지 {index + 1}
-                    </h4>
-                    {result.success && result.data?.text && (
-                      <Button
-                        variant='outline'
-                        size='sm'
-                        onClick={() =>
-                          copyToClipboard(result.data!.text, index)
-                        }
-                        className='flex items-center space-x-2'
-                      >
-                        {copiedIndex === index ? (
-                          <Check size={16} />
-                        ) : (
-                          <Copy size={16} />
-                        )}
-                        <span>{copiedIndex === index ? "복사됨" : "복사"}</span>
-                      </Button>
-                    )}
-                  </div>
-                  <OCRResult result={result} />
+            {/* API Info */}
+            <div className='bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6'>
+              <div className='flex items-start space-x-3'>
+                <Info className='h-5 w-5 text-blue-600 mt-0.5' />
+                <div className='text-sm text-blue-800'>
+                  <p className='font-medium mb-1'>Google Vision API 사용 안내</p>
+                  <ul className='space-y-1 text-xs'>
+                    <li>• 월 1,000회 무료 OCR 처리</li>
+                    <li>• 최대 파일 크기: 10MB</li>
+                    <li>• 지원 형식: JPEG, PNG, GIF, BMP, WEBP</li>
+                    <li>• 최대 해상도: 20MP (메가픽셀)</li>
+                    <li>• 여러 이미지 동시 처리 가능</li>
+                  </ul>
                 </div>
-              ))}
+              </div>
             </div>
-          </div>
+
+            {/* Upload Section */}
+            <div className='bg-white rounded-lg shadow-sm p-6 mb-6'>
+              <h3 className='text-xl font-semibold text-gray-900 mb-4'>
+                이미지 업로드
+              </h3>
+
+              <ImageUpload
+                onImageSelect={handleImageSelect}
+                selectedImages={selectedImages}
+                onClearImages={handleClearImages}
+                maxSize={10}
+              />
+
+              {selectedImages.length > 0 && (
+                <div className='mt-6'>
+                  <Button
+                    onClick={handlePerformOCR}
+                    loading={isProcessing}
+                    disabled={isProcessing}
+                    className='w-full'
+                    size='lg'
+                  >
+                    {isProcessing
+                      ? "처리 중..."
+                      : `${selectedImages.length}개 이미지 텍스트 추출`}
+                  </Button>
+                </div>
+              )}
+
+              {error && (
+                <div className='mt-4 p-4 bg-red-50 border border-red-200 rounded-lg'>
+                  <p className='text-red-600'>{error}</p>
+                </div>
+              )}
+            </div>
+
+            {/* Processing State */}
+            {isProcessing && (
+              <div className='bg-white rounded-lg shadow-sm p-8 text-center'>
+                <LoadingSpinner
+                  size='lg'
+                  text='이미지에서 텍스트를 추출하고 있습니다...'
+                />
+              </div>
+            )}
+
+            {/* OCR Results */}
+            {batchResult && (
+              <div className='bg-white rounded-lg shadow-sm p-6'>
+                <div className='flex items-center justify-between mb-6'>
+                  <h3 className='text-xl font-semibold text-gray-900'>
+                    텍스트 추출 결과
+                  </h3>
+                  <div className='flex items-center space-x-4'>
+                    <div className='text-sm text-gray-600'>
+                      성공:{" "}
+                      <span className='font-medium text-green-600'>
+                        {batchResult.totalSuccess}
+                      </span>{" "}
+                      / 실패:{" "}
+                      <span className='font-medium text-red-600'>
+                        {batchResult.totalFailed}
+                      </span>
+                    </div>
+                    <Button
+                      variant='outline'
+                      size='sm'
+                      onClick={() => copyToClipboard(getAllText())}
+                      className='flex items-center space-x-2'
+                    >
+                      {allTextCopied ? <Check size={16} /> : <Copy size={16} />}
+                      <span>{allTextCopied ? "복사됨" : "전체 복사"}</span>
+                    </Button>
+                  </div>
+                </div>
+
+                <div className='space-y-6 max-h-[72rem] overflow-y-auto'>
+                  {batchResult.results.map((result, index) => (
+                    <div
+                      key={index}
+                      className='border border-gray-200 rounded-lg p-4'
+                    >
+                      <div className='flex items-center justify-between mb-3'>
+                        <h4 className='font-medium text-gray-900'>
+                          이미지 {index + 1}
+                        </h4>
+                        {result.success && result.data?.text && (
+                          <Button
+                            variant='outline'
+                            size='sm'
+                            onClick={() =>
+                              copyToClipboard(result.data!.text, index)
+                            }
+                            className='flex items-center space-x-2'
+                          >
+                            {copiedIndex === index ? (
+                              <Check size={16} />
+                            ) : (
+                              <Copy size={16} />
+                            )}
+                            <span>{copiedIndex === index ? "복사됨" : "복사"}</span>
+                          </Button>
+                        )}
+                      </div>
+                      <OCRResult result={result} />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
         )}
       </main>
 

@@ -16,12 +16,13 @@ export class OCRService {
     this.apiClient = ApiClient.getInstance()
   }
 
-  async performOCR(imageFile: File): Promise<OCRResponse> {
+  async performOCR(imageFile: File, authToken?: string): Promise<OCRResponse> {
     try {
       const result = await this.apiClient.uploadFile<OCRResponse>(
         "/ocr",
         imageFile,
-        "image"
+        "image",
+        authToken
       )
       return result
     } catch (error) {
@@ -36,14 +37,17 @@ export class OCRService {
     }
   }
 
-  async performBatchOCR(imageFiles: File[]): Promise<BatchOCRResult> {
+  async performBatchOCR(
+    imageFiles: File[],
+    authToken?: string
+  ): Promise<BatchOCRResult> {
     const results: OCRResponse[] = []
     let totalSuccess = 0
     let totalFailed = 0
 
     for (let i = 0; i < imageFiles.length; i++) {
       try {
-        const result = await this.performOCR(imageFiles[i])
+        const result = await this.performOCR(imageFiles[i], authToken)
         results.push(result)
 
         if (result.success) {
@@ -71,14 +75,15 @@ export class OCRService {
   }
 
   async uploadImage(
-    imageFile: File
+    imageFile: File,
+    authToken?: string
   ): Promise<{ success: boolean; url?: string; error?: string }> {
     try {
       const result = await this.apiClient.uploadFile<{
         success: boolean
         url?: string
         error?: string
-      }>("/upload", imageFile, "image")
+      }>("/upload", imageFile, "image", authToken)
       return result
     } catch (error) {
       console.error("업로드 서비스 오류:", error)
